@@ -11,23 +11,9 @@ export function changeStyleProperty(property, value){
     return(lookingDown || faceIsClose);
   }
   
-  export function showNotification(notificationText){
+export function showNotification(notificationText){
     new Notification(notificationText);
   }
-
-// Add this new function for audio feedback
-export function speakFeedback(message) {
-  if ('speechSynthesis' in window) {
-    const speech = new SpeechSynthesisUtterance(message);
-    speech.lang = 'en-US';
-    speech.volume = 1;
-    speech.rate = 1;
-    speech.pitch = 1;
-    window.speechSynthesis.speak(speech);
-  } else {
-    console.log("Speech synthesis not supported");
-  }
-}
 
 // Helper function to draw a line on the canvas
 export function drawLine(ctx, x1, y1, x2, y2, color, thickness = 2) {

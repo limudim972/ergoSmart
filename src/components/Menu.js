@@ -1,8 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MenuHeader } from "./MenuHeader";
 import { CalibrateBtn } from "./CalibrateBtn";
 import { PostureStatus } from "./PostureStatus";
-import logo from "../utils/ergosmart.png";
 
 export let btnSelected = false;
 export function setBtn(value) {
@@ -11,40 +10,80 @@ export function setBtn(value) {
 
 export function Menu(props) {
   const [state, setState] = useState("Calibration");
-  const [audioEnabled, setAudioEnabled] = useState(true);
+  const confidence = props.sideConfidence || {};
+
+  const formatConfidence = (value) => {
+    if (typeof value !== "number") return "לא זמין";
+    return value.toFixed(2);
+  };
 
   const calibratePose = () => {
     if (props.postureRef.current === -1) {
-      console.log("Cannot calibrate. No pose is detected.");
+      console.log("לא ניתן לבצע כיול. לא זוהתה תנוחה.");
     } else {
       btnSelected = true;
       setState("Tracking");
     }
   };
 
-  const toggleAudio = () => {
-    setAudioEnabled(!audioEnabled);
+  const updateSoundConfig = (patch) => {
+    props.onSoundConfigChange((prev) => ({ ...prev, ...patch }));
   };
+
+  useEffect(() => {
+    setState("Calibration");
+  }, [props.viewMode]);
 
   return (
     <div className="menu bg-deep-space bg-opacity-80 backdrop-filter backdrop-blur-lg rounded-3xl p-6 sm:p-8 mb-4 sm:mb-8 w-full max-w-md mx-auto border border-neon-blue border-opacity-30">
-      <div className="flex items-center justify-center mb-6">
-        <img
-          src={logo}
-          className="w-20 h-20 sm:w-24 sm:h-24 animate-pulse-slow rounded-full"
-          alt="logo"
-        />
+      <MenuHeader state={state} viewMode={props.viewMode} />
+      <div className="rounded-xl border border-neon-blue border-opacity-30 bg-space-gray bg-opacity-40 p-3 mb-4 text-sm">
+        <p className="text-white mb-1">צד במעקב: <span className="text-neon-green uppercase">{confidence.side || "לא זמין"}</span></p>
+        <p className="text-white mb-1">אוזן: <span className="text-neon-green">{formatConfidence(confidence.ear)}</span></p>
+        <p className="text-white mb-2">כתף: <span className="text-neon-green">{formatConfidence(confidence.shoulder)}</span></p>
+        <p className="text-white">minDetectionConfidence: <span className="text-neon-blue">{props.minDetectionConfidence}</span></p>
+        <p className="text-white">minTrackingConfidence: <span className="text-neon-blue">{props.minTrackingConfidence}</span></p>
       </div>
-      <MenuHeader state={state} />
+      <div className="rounded-xl border border-neon-green border-opacity-30 bg-space-gray bg-opacity-40 p-3 mb-4 text-sm">
+        <label className="flex items-center gap-2 text-white mb-3">
+          <input
+            type="checkbox"
+            checked={props.soundConfig.enabled}
+            onChange={(e) => updateSoundConfig({ enabled: e.target.checked })}
+          />
+          התראת צליל לפי זווית
+        </label>
+        <div className="grid grid-cols-1 gap-3">
+          <label className="text-white">
+            זווית (°): <span className="text-neon-blue">{props.soundConfig.angleThreshold}</span>
+            <input
+              type="range"
+              min="5"
+              max="45"
+              step="1"
+              value={props.soundConfig.angleThreshold}
+              onChange={(e) => updateSoundConfig({ angleThreshold: Number(e.target.value) })}
+              className="mt-1 w-full"
+            />
+          </label>
+          <label className="text-white">
+            משך יציבה לקויה לפני צליל (שניות): <span className="text-neon-blue">{props.soundConfig.durationSeconds}</span>
+            <input
+              type="range"
+              min="1"
+              max="60"
+              step="1"
+              value={props.soundConfig.durationSeconds}
+              onChange={(e) => updateSoundConfig({ durationSeconds: Number(e.target.value) })}
+              className="mt-1 w-full"
+            />
+            <p className="text-xs text-neon-blue mt-1 opacity-80">הצליל יושמע רק אם יש יציבה לקויה והזווית נשארת מעל הסף למשך הזמן הזה.</p>
+          </label>
+        </div>
+      </div>
       <PostureStatus state={state} />
       <div className="flex flex-col sm:flex-row items-center justify-center space-y-4 sm:space-y-0 sm:space-x-4 mt-6">
         <CalibrateBtn state={state} onClickCallback={calibratePose} />
-        <button
-          className="btn w-full sm:w-auto bg-space-gray text-neon-blue hover:bg-neon-blue hover:text-deep-space transition-colors duration-300"
-          onClick={toggleAudio}
-        >
-          {audioEnabled ? "Disable Audio" : "Enable Audio"}
-        </button>
       </div>
     </div>
   );

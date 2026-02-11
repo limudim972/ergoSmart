@@ -12,10 +12,10 @@ export function LoadingScreen() {
                     </div>
                 </div>
                 <p className="text-neon-blue text-xl sm:text-2xl font-light mb-4 animate-pulse-slow glow-neon">
-                    Initializing ergoSmart AI
+                    מאתחל את ergoSmart AI
                 </p>
                 <p className="text-neon-blue text-sm sm:text-base animate-pulse opacity-75">
-                    Calibrating neural networks...
+                    מכייל רשתות נוירונים...
                 </p>
             </div>
         </div>

@@ -6,7 +6,7 @@ export function CalibrateBtn({onClickCallback}) {
                      transform hover:scale-105 uppercase tracking-wider"
           onClick={onClickCallback}
         >
-          Calibrate
+          כיול
         </button>
     )
 }

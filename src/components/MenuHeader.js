@@ -1,21 +1,21 @@
 export function MenuHeader(props) {
     if(props.state === "Calibration"){
+      const isSideView = props.viewMode === "side";
       return(
         <div className="text-neon-blue">
-          <h3 className="text-2xl font-bold mb-4">Welcome to ergoSmart AI</h3>
+          <h3 className="text-2xl font-bold mb-4">הוראות</h3>
           <ol className="list-decimal list-inside space-y-2">
-            <li>Ensure your webcam is on and positioned directly in front of you</li>
-            <li>Sit upright with "good" posture, head and shoulders in frame</li>
-            <li>Click the "Calibrate" button below</li>
-            <li>Continue using your computer as usual. We'll notify you if you slouch!</li>
+            <li>{isSideView ? "השאירו את הראש, הכתף והזרוע בתוך הפריים" : "שבו זקוף עם יציבה טובה, כשהראש והכתפיים בפריים"}</li>
+            <li>לחצו על כפתור "כיול" למטה</li>
+            <li>המשיכו לעבוד כרגיל. נעדכן אתכם אם תתכופפו</li>
           </ol>
         </div>
       );
     } else if(props.state === "Tracking"){
       return(
         <div className="text-neon-green">
-          <h3 className="text-2xl font-bold mb-4">Tracking Your Posture</h3>
-          <p>To recalibrate, sit upright and click "Calibrate" again.</p>
+          <h3 className="text-2xl font-bold mb-4">מעקב יציבה פעיל</h3>
+          <p>לכיול מחדש שבו זקוף ולחצו שוב על "כיול".</p>
         </div>
       );
     }
