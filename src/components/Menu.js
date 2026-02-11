@@ -11,6 +11,12 @@ export function setBtn(value) {
 export function Menu(props) {
   const [state, setState] = useState("Calibration");
   const confidence = props.sideConfidence || {};
+  const angleMin = 5;
+  const angleMax = 90;
+  const liveAngleValue = typeof props.liveSideAngle === "number" ? props.liveSideAngle : null;
+  const liveAnglePercent = liveAngleValue === null
+    ? null
+    : Math.min(100, Math.max(0, ((liveAngleValue - angleMin) / (angleMax - angleMin)) * 100));
 
   const formatConfidence = (value) => {
     if (typeof value !== "number") return "לא זמין";
@@ -56,27 +62,41 @@ export function Menu(props) {
         <div className="grid grid-cols-1 gap-3">
           <label className="text-white">
             זווית (°): <span className="text-neon-blue">{props.soundConfig.angleThreshold}</span>
-            <input
-              type="range"
-              min="5"
-              max="45"
-              step="1"
-              value={props.soundConfig.angleThreshold}
-              onChange={(e) => updateSoundConfig({ angleThreshold: Number(e.target.value) })}
-              className="mt-1 w-full"
-            />
+            <div className="relative mt-1" dir="ltr">
+              <input
+                type="range"
+                min={angleMin}
+                max={angleMax}
+                step="1"
+                value={props.soundConfig.angleThreshold}
+                onChange={(e) => updateSoundConfig({ angleThreshold: Number(e.target.value) })}
+                className="w-full"
+              />
+              {liveAnglePercent !== null && (
+                <span
+                  className="pointer-events-none absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full border border-white shadow"
+                  style={{ left: `calc(${liveAnglePercent}% - 6px)`, backgroundColor: "#ffd166" }}
+                  aria-hidden="true"
+                />
+              )}
+            </div>
+            <p className="text-xs text-neon-green mt-1 opacity-90">
+              זווית נוכחית: <span className="text-white">{liveAngleValue === null ? "לא זמין" : `${liveAngleValue.toFixed(1)}°`}</span>
+            </p>
           </label>
           <label className="text-white">
             משך יציבה לקויה לפני צליל (שניות): <span className="text-neon-blue">{props.soundConfig.durationSeconds}</span>
-            <input
-              type="range"
-              min="1"
-              max="60"
-              step="1"
-              value={props.soundConfig.durationSeconds}
-              onChange={(e) => updateSoundConfig({ durationSeconds: Number(e.target.value) })}
-              className="mt-1 w-full"
-            />
+            <div dir="ltr">
+              <input
+                type="range"
+                min="1"
+                max="60"
+                step="1"
+                value={props.soundConfig.durationSeconds}
+                onChange={(e) => updateSoundConfig({ durationSeconds: Number(e.target.value) })}
+                className="mt-1 w-full"
+              />
+            </div>
             <p className="text-xs text-neon-blue mt-1 opacity-80">הצליל יושמע רק אם יש יציבה לקויה והזווית נשארת מעל הסף למשך הזמן הזה.</p>
           </label>
         </div>

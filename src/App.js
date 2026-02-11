@@ -16,6 +16,66 @@ import {
 } from './utils/utilities'
 
 function App() {
+  const UI_SETTINGS_STORAGE_KEY = 'ergoSmart.uiSettings';
+  const DEFAULT_VIEW_MODE = 'side';
+  const DEFAULT_SOUND_CONFIG = {
+    enabled: true,
+    angleThreshold: 18,
+    durationSeconds: 2
+  };
+
+  function loadUiSettings() {
+    if (typeof window === 'undefined') {
+      return {
+        viewMode: DEFAULT_VIEW_MODE,
+        soundConfig: DEFAULT_SOUND_CONFIG
+      };
+    }
+
+    try {
+      const raw = window.localStorage.getItem(UI_SETTINGS_STORAGE_KEY);
+      if (!raw) {
+        return {
+          viewMode: DEFAULT_VIEW_MODE,
+          soundConfig: DEFAULT_SOUND_CONFIG
+        };
+      }
+
+      const parsed = JSON.parse(raw);
+      const viewMode = parsed?.viewMode === 'front' ? 'front' : DEFAULT_VIEW_MODE;
+      const enabled = Boolean(parsed?.soundConfig?.enabled);
+      const angleThresholdRaw = Number(parsed?.soundConfig?.angleThreshold);
+      const durationSecondsRaw = Number(parsed?.soundConfig?.durationSeconds);
+
+      const soundConfig = {
+        enabled,
+        angleThreshold: Number.isFinite(angleThresholdRaw) ? Math.min(90, Math.max(5, angleThresholdRaw)) : DEFAULT_SOUND_CONFIG.angleThreshold,
+        durationSeconds: Number.isFinite(durationSecondsRaw) ? Math.min(60, Math.max(1, durationSecondsRaw)) : DEFAULT_SOUND_CONFIG.durationSeconds
+      };
+
+      return { viewMode, soundConfig };
+    } catch (error) {
+      return {
+        viewMode: DEFAULT_VIEW_MODE,
+        soundConfig: DEFAULT_SOUND_CONFIG
+      };
+    }
+  }
+
+  function saveUiSettings(settings) {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(UI_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+    } catch (error) {
+      // Ignore storage errors and keep running with in-memory state.
+    }
+  }
+
+  const initialUiSettings = loadUiSettings();
+
   //reference to canvas & webcam
   const canvasRef = useRef(null);
   const webcamRef = useRef(null);
@@ -25,62 +85,102 @@ function App() {
   const goodPostureRef = useRef(null);
   const badPostureCountRef = useRef(0);
   const trackedSideRef = useRef('left');
-  const viewModeRef = useRef('side');
+  const viewModeRef = useRef(initialUiSettings.viewMode);
   const smoothedShoulderRef = useRef(null);
+  const smoothedSideAngleRef = useRef(null);
+  const smoothedElbowAngleRef = useRef(null);
+  const displayedSideAngleRef = useRef(null);
 
   const [loaded, setLoaded] = useState(false);
-  const [viewMode, setViewMode] = useState('side');
+  const [viewMode, setViewMode] = useState(initialUiSettings.viewMode);
   const [sideConfidence, setSideConfidence] = useState({
     side: 'left',
     ear: null,
     shoulder: null
   });
-  const [soundConfig, setSoundConfig] = useState({
-    enabled: true,
-    angleThreshold: 18,
-    durationSeconds: 2
+  const [soundConfig, setSoundConfig] = useState(initialUiSettings.soundConfig);
+  const [liveSideAngle, setLiveSideAngle] = useState(null);
+  const [beepSnapshots, setBeepSnapshots] = useState([]);
+  const [selectedSnapshot, setSelectedSnapshot] = useState(null);
+  const [startupStatus, setStartupStatus] = useState({
+    progress: 10,
+    stageText: 'טוען מודל...',
+    detailText: 'מתחיל את תהליך האתחול',
+    isStuck: false,
+    frameCount: 0
   });
 
   const [postureFeedback, setPostureFeedback] = useState('');
   const angleAlertStartRef = useRef(null);
   const lastAngleAlertRef = useRef(0);
   const audioContextRef = useRef(null);
+  const hasLoggedLoadedRef = useRef(false);
+  const appReadyRef = useRef(false);
   const GOOD_POSTURE_FEEDBACK = "יציבה מצוינת, המשיכו כך!";
-  const ANGLE_ALERT_COOLDOWN_MS = 60000;
+  const STARTUP_STUCK_MS = 10000;
+  const ANGLE_ALERT_COOLDOWN_MS = 10000;
   const MIN_DETECTION_CONFIDENCE = 0.5;
   const MIN_TRACKING_CONFIDENCE = 0.5;
+  const MODEL_COMPLEXITY = 0;
   const VISIBILITY_THRESHOLD = 0.5;
   const SHOULDER_MIN_VISIBILITY = 0.6;
   const SHOULDER_SMOOTHING_ALPHA = 0.2;
   const SHOULDER_DEADZONE_PX = 3;
-  const EAR_POINT_RADIUS = 3;
-  const ARM_POINT_RADIUS = 4;
+  const EAR_POINT_RADIUS = 30;
+  const ARM_POINT_RADIUS = 30;
+  const ELBOW_POINT_RADIUS = 24;
+  const WRIST_POINT_RADIUS = 20;
   const LANDMARK_COLORS = {
     ear: '#ffd166',
-    shoulder: '#7bffb2'
+    shoulder: '#7bffb2',
+    elbow: '#8ecae6',
+    wrist: '#fb8500'
   };
   const ANGLE_LINE_COLOR = '#f8f9fa';
+  const ARM_LINE_COLOR = '#a8dadc';
   const ANGLE_TEXT_COLOR = '#f8f9fa';
+  const SIDE_ANGLE_LINE_WIDTH = 20;
+  const ARM_LINE_WIDTH = 10;
+  const SIDE_ANGLE_TEXT_FONT_SIZE = 60;
+  const SIDE_ANGLE_TEXT_OFFSET_PX = 130;
+  const SIDE_ANGLE_SMOOTHING_ALPHA = 0.15;
+  const SIDE_ANGLE_DISPLAY_STEP_DEGREES = 2;
+  const ELBOW_ANGLE_SMOOTHING_ALPHA = 0.2;
+  const MAX_BEEP_SNAPSHOTS = 8;
   const SIDE_LANDMARKS = {
-    left: { ear: 7, shoulder: 11 },
-    right: { ear: 8, shoulder: 12 }
+    left: { ear: 7, shoulder: 11, elbow: 13, wrist: 15 },
+    right: { ear: 8, shoulder: 12, elbow: 14, wrist: 16 }
   };
   const POINT_OFFSET_LIMIT = 0.2;
   const POINT_DRAG_HIT_RADIUS_PX = 20;
+  const SIDE_POINT_OFFSETS_STORAGE_KEY = 'ergoSmart.sidePointOffsets';
+  const DEFAULT_SIDE_POINT_OFFSETS = {
+    ear: { x: 0, y: 0 },
+    shoulder: { x: 0, y: 0 },
+    elbow: { x: 0, y: 0 },
+    wrist: { x: 0, y: 0 }
+  };
 
   // Keep refs in sync immediately so frame callbacks always read latest mode.
   viewModeRef.current = viewMode;
   const soundConfigRef = useRef(soundConfig);
   soundConfigRef.current = soundConfig;
-  const sidePointOffsetsRef = useRef({
-    ear: { x: 0, y: 0 },
-    shoulder: { x: 0, y: 0 }
-  });
+  const sidePointOffsetsRef = useRef(loadSidePointOffsets());
   const latestRawSidePointsRef = useRef({
     ear: null,
-    shoulder: null
+    shoulder: null,
+    elbow: null,
+    wrist: null
   });
   const draggingPointRef = useRef(null);
+  const startupBeginTsRef = useRef(Date.now());
+  const startupFrameCountRef = useRef(0);
+  const modelLoadStartTsRef = useRef(null);
+  const initRunIdRef = useRef(0);
+  const poseRef = useRef(null);
+  const cameraRef = useRef(null);
+  const isSendingFrameRef = useRef(false);
+  const isPoseReadyRef = useRef(false);
 
   function playAngleAlert(severity = 1) {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -101,19 +201,20 @@ function App() {
     const oscillator = ctx.createOscillator();
     const gainNode = ctx.createGain();
     const clampedSeverity = Math.max(0, Math.min(1, severity));
-    const frequency = 420 + (clampedSeverity * 260);
-    const volume = 0.04 + (clampedSeverity * 0.05);
+    const frequency = 760 + (clampedSeverity * 520);
+    const volume = 0.06 + (clampedSeverity * 0.08);
 
-    oscillator.type = 'sine';
+    oscillator.type = 'square';
     oscillator.frequency.setValueAtTime(frequency, now);
     gainNode.gain.setValueAtTime(0.0001, now);
     gainNode.gain.exponentialRampToValueAtTime(volume, now + 0.01);
-    gainNode.gain.exponentialRampToValueAtTime(0.0001, now + 0.2);
+    gainNode.gain.exponentialRampToValueAtTime(volume * 0.7, now + 0.25);
+    gainNode.gain.exponentialRampToValueAtTime(0.0001, now + 0.55);
 
     oscillator.connect(gainNode);
     gainNode.connect(ctx.destination);
     oscillator.start(now);
-    oscillator.stop(now + 0.22);
+    oscillator.stop(now + 0.58);
   }
 
   function isVisible(landmark) {
@@ -175,6 +276,64 @@ function App() {
     return Math.min(max, Math.max(min, value));
   }
 
+  function normalizeSidePointOffsets(offsets) {
+    const earX = Number(offsets?.ear?.x);
+    const earY = Number(offsets?.ear?.y);
+    const shoulderX = Number(offsets?.shoulder?.x);
+    const shoulderY = Number(offsets?.shoulder?.y);
+    const elbowX = Number(offsets?.elbow?.x);
+    const elbowY = Number(offsets?.elbow?.y);
+    const wristX = Number(offsets?.wrist?.x);
+    const wristY = Number(offsets?.wrist?.y);
+
+    return {
+      ear: {
+        x: Number.isFinite(earX) ? clamp(earX, -POINT_OFFSET_LIMIT, POINT_OFFSET_LIMIT) : 0,
+        y: Number.isFinite(earY) ? clamp(earY, -POINT_OFFSET_LIMIT, POINT_OFFSET_LIMIT) : 0
+      },
+      shoulder: {
+        x: Number.isFinite(shoulderX) ? clamp(shoulderX, -POINT_OFFSET_LIMIT, POINT_OFFSET_LIMIT) : 0,
+        y: Number.isFinite(shoulderY) ? clamp(shoulderY, -POINT_OFFSET_LIMIT, POINT_OFFSET_LIMIT) : 0
+      },
+      elbow: {
+        x: Number.isFinite(elbowX) ? clamp(elbowX, -POINT_OFFSET_LIMIT, POINT_OFFSET_LIMIT) : 0,
+        y: Number.isFinite(elbowY) ? clamp(elbowY, -POINT_OFFSET_LIMIT, POINT_OFFSET_LIMIT) : 0
+      },
+      wrist: {
+        x: Number.isFinite(wristX) ? clamp(wristX, -POINT_OFFSET_LIMIT, POINT_OFFSET_LIMIT) : 0,
+        y: Number.isFinite(wristY) ? clamp(wristY, -POINT_OFFSET_LIMIT, POINT_OFFSET_LIMIT) : 0
+      }
+    };
+  }
+
+  function loadSidePointOffsets() {
+    if (typeof window === 'undefined') {
+      return DEFAULT_SIDE_POINT_OFFSETS;
+    }
+
+    try {
+      const stored = window.localStorage.getItem(SIDE_POINT_OFFSETS_STORAGE_KEY);
+      if (!stored) {
+        return DEFAULT_SIDE_POINT_OFFSETS;
+      }
+      return normalizeSidePointOffsets(JSON.parse(stored));
+    } catch (error) {
+      return DEFAULT_SIDE_POINT_OFFSETS;
+    }
+  }
+
+  function saveSidePointOffsets(offsets) {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(SIDE_POINT_OFFSETS_STORAGE_KEY, JSON.stringify(offsets));
+    } catch (error) {
+      // Ignore storage errors; app should keep working with in-memory values.
+    }
+  }
+
   function applyPointOffset(point, offset) {
     if (!point) return point;
     if (!offset) return point;
@@ -185,36 +344,56 @@ function App() {
     };
   }
 
-  function getSidePostureFeedback(landmarks, baseline, side) {
-    const indices = SIDE_LANDMARKS[side];
-    const feedback = [];
-    const ear = applyPointOffset(landmarks[indices.ear], sidePointOffsetsRef.current.ear);
-    const baseEar = applyPointOffset(baseline[indices.ear], sidePointOffsetsRef.current.ear);
-    const shoulder = applyPointOffset(landmarks[indices.shoulder], sidePointOffsetsRef.current.shoulder);
-    const baseShoulder = applyPointOffset(baseline[indices.shoulder], sidePointOffsetsRef.current.shoulder);
+  function computeJointAngle(a, b, c) {
+    if (!a || !b || !c) return null;
+    const vectorBAx = a.x - b.x;
+    const vectorBAy = a.y - b.y;
+    const vectorBCx = c.x - b.x;
+    const vectorBCy = c.y - b.y;
+    const magnitudeBA = Math.hypot(vectorBAx, vectorBAy);
+    const magnitudeBC = Math.hypot(vectorBCx, vectorBCy);
+    if (!magnitudeBA || !magnitudeBC) return null;
+    const dot = (vectorBAx * vectorBCx) + (vectorBAy * vectorBCy);
+    const cosTheta = clamp(dot / (magnitudeBA * magnitudeBC), -1, 1);
+    return Math.acos(cosTheta) * (180 / Math.PI);
+  }
 
-    if (isVisible(ear) && isVisible(baseEar)) {
-      const headYDiff = ear.y - baseEar.y;
-      if (headYDiff > 0.03) {
-        feedback.push("הרימו מעט את הראש");
-      } else if (headYDiff < -0.03) {
-        feedback.push("הורידו מעט את הראש");
-      }
+  function smoothAngleValue(nextAngle, angleRef, alpha) {
+    if (typeof nextAngle !== 'number') {
+      angleRef.current = null;
+      return null;
     }
-
-    if (isVisible(ear) && isVisible(shoulder) && isVisible(baseEar) && isVisible(baseShoulder)) {
-      const headForward = Math.abs(ear.x - shoulder.x);
-      const baselineForward = Math.abs(baseEar.x - baseShoulder.x);
-      if (headForward - baselineForward > 0.04) {
-        feedback.push("החזירו את הראש לקו הכתפיים");
-      }
+    if (typeof angleRef.current !== 'number') {
+      angleRef.current = nextAngle;
+      return nextAngle;
     }
+    angleRef.current = angleRef.current + ((nextAngle - angleRef.current) * alpha);
+    return angleRef.current;
+  }
 
-    if (feedback.length === 0) {
-      feedback.push(GOOD_POSTURE_FEEDBACK);
+  function captureBeepSnapshot(canvasElement) {
+    const videoElement = webcamRef.current?.video;
+    if (!videoElement || !canvasElement?.width || !canvasElement?.height) {
+      return;
     }
+    try {
+      const snapshotCanvas = document.createElement('canvas');
+      snapshotCanvas.width = canvasElement.width;
+      snapshotCanvas.height = canvasElement.height;
+      const snapshotContext = snapshotCanvas.getContext('2d');
+      snapshotContext.drawImage(videoElement, 0, 0, snapshotCanvas.width, snapshotCanvas.height);
+      snapshotContext.drawImage(canvasElement, 0, 0, snapshotCanvas.width, snapshotCanvas.height);
 
-    return feedback.join(". ");
+      const snapshot = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        dataUrl: snapshotCanvas.toDataURL('image/jpeg', 0.85),
+        createdAt: new Date().toLocaleTimeString('he-IL')
+      };
+
+      setBeepSnapshots((prev) => [snapshot, ...prev].slice(0, MAX_BEEP_SNAPSHOTS));
+    } catch (error) {
+      console.error('[Snapshot] Failed to capture beep frame:', error);
+    }
   }
 
   function getPostureFeedback(landmarks, goodPosture) {
@@ -295,17 +474,54 @@ function App() {
   //run this function when pose results are determined
   function onResults(results){
     let sideAngleDeviation = null;
+    startupFrameCountRef.current += 1;
+    const startupElapsedMs = Date.now() - startupBeginTsRef.current;
 
-    if(!loaded){ 
-      setLoaded(true);
-      console.log("מודל זיהוי התנוחה נטען בהצלחה.");
-      changeStyleProperty("--loader-display","none");
+    if(!hasLoggedLoadedRef.current){ 
+      hasLoggedLoadedRef.current = true;
+      const modelLoadDurationMs = modelLoadStartTsRef.current
+        ? Date.now() - modelLoadStartTsRef.current
+        : null;
+      console.log(
+        modelLoadDurationMs === null
+          ? "[MediaPipe] Pose model loaded."
+          : `[MediaPipe] Pose model loaded in ${modelLoadDurationMs}ms (${(modelLoadDurationMs / 1000).toFixed(2)}s).`
+      );
+      setStartupStatus({
+        progress: 65,
+        stageText: 'מזהה תנוחה ראשונה...',
+        detailText: `פריימים שנבדקו: ${startupFrameCountRef.current}`,
+        isStuck: false
+      });
+    }
+    
+    // Detailed startup frame progress
+    if (!appReadyRef.current && startupFrameCountRef.current % 5 === 0) {
+      const elapsedSec = (startupElapsedMs / 1000).toFixed(2);
+      const fps = (startupFrameCountRef.current / (startupElapsedMs / 1000)).toFixed(1);
+      console.log(`[Startup Frame ${startupFrameCountRef.current}] Elapsed: ${elapsedSec}s | FPS: ${fps}`);
     }
 
     if (!results.poseLandmarks) { //if the model is unable to detect a pose 
       console.log("לא זוהתה תנוחה.");
+      if (!appReadyRef.current) {
+        const isStuck = startupElapsedMs >= STARTUP_STUCK_MS;
+        const elapsedSec = (startupElapsedMs / 1000).toFixed(1);
+        setStartupStatus({
+          progress: isStuck ? 90 : 70,
+          stageText: isStuck ? 'נראה שהתהליך נתקע בזיהוי תנוחה ראשונה' : 'מזהה תנוחה ראשונה...',
+          detailText: isStuck
+            ? `עברו ${elapsedSec}s ללא זיהוי. בדקו תאורה, מרחק מצלמה ושהגוף כולו בפריים`
+            : `פריימים שנבדקו: ${startupFrameCountRef.current} | זמן: ${elapsedSec}s`,
+          isStuck
+        });
+      }
       postureRef.current = -1;//change pose state to "undetected", can't track pose
+      setLiveSideAngle(null);
       smoothedShoulderRef.current = null;
+      smoothedSideAngleRef.current = null;
+      smoothedElbowAngleRef.current = null;
+      displayedSideAngleRef.current = null;
       setSideConfidence({
         side: trackedSideRef.current,
         ear: null,
@@ -316,6 +532,17 @@ function App() {
     }
 
     let landmarks = results.poseLandmarks;
+    if (!appReadyRef.current) {
+      appReadyRef.current = true;
+      setLoaded(true);
+      changeStyleProperty("--loader-display","none");
+      setStartupStatus({
+        progress: 100,
+        stageText: 'המערכת מוכנה',
+        detailText: 'זוהתה תנוחה ראשונה בהצלחה',
+        isStuck: false
+      });
+    }
     postureRef.current = null;
     changeStyleProperty("--btn-color","rgba(0, 105, 237, 1)"); //make the calibrate button solid
 
@@ -337,18 +564,106 @@ function App() {
       const shoulder = landmarks[indices.shoulder];
       const stableShoulder = getStableShoulderPoint(shoulder, canvasElement.width, canvasElement.height);
       const rawEar = landmarks[indices.ear];
+      const elbow = landmarks[indices.elbow];
+      const wrist = landmarks[indices.wrist];
       latestRawSidePointsRef.current = {
         ear: rawEar,
-        shoulder: stableShoulder
+        shoulder: stableShoulder,
+        elbow,
+        wrist
       };
       const ear = applyPointOffset(rawEar, sidePointOffsetsRef.current.ear);
       const adjustedShoulder = applyPointOffset(stableShoulder, sidePointOffsetsRef.current.shoulder);
+      const adjustedElbow = applyPointOffset(elbow, sidePointOffsetsRef.current.elbow);
+      const adjustedWrist = applyPointOffset(wrist, sidePointOffsetsRef.current.wrist);
 
       setSideConfidence({
         side,
         ear: getVisibilityValue(ear),
         shoulder: getVisibilityValue(shoulder)
       });
+
+      if (adjustedShoulder && isVisible(adjustedElbow)) {
+        drawLine(
+          canvasCtx,
+          adjustedShoulder.x * canvasElement.width,
+          adjustedShoulder.y * canvasElement.height,
+          adjustedElbow.x * canvasElement.width,
+          adjustedElbow.y * canvasElement.height,
+          ARM_LINE_COLOR,
+          ARM_LINE_WIDTH
+        );
+      }
+      if (isVisible(adjustedElbow) && isVisible(adjustedWrist)) {
+        drawLine(
+          canvasCtx,
+          adjustedElbow.x * canvasElement.width,
+          adjustedElbow.y * canvasElement.height,
+          adjustedWrist.x * canvasElement.width,
+          adjustedWrist.y * canvasElement.height,
+          ARM_LINE_COLOR,
+          ARM_LINE_WIDTH
+        );
+      }
+
+      if (adjustedShoulder && isVisible(adjustedElbow) && isVisible(adjustedWrist)) {
+        const shoulderPoint = {
+          x: adjustedShoulder.x * canvasElement.width,
+          y: adjustedShoulder.y * canvasElement.height
+        };
+        const elbowPoint = {
+          x: adjustedElbow.x * canvasElement.width,
+          y: adjustedElbow.y * canvasElement.height
+        };
+        const wristPoint = {
+          x: adjustedWrist.x * canvasElement.width,
+          y: adjustedWrist.y * canvasElement.height
+        };
+        const elbowAngle = computeJointAngle(shoulderPoint, elbowPoint, wristPoint);
+        smoothAngleValue(elbowAngle, smoothedElbowAngleRef, ELBOW_ANGLE_SMOOTHING_ALPHA);
+      } else {
+        smoothedElbowAngleRef.current = null;
+      }
+
+      if (adjustedShoulder && isVisible(ear)) {
+        const shoulderX = adjustedShoulder.x * canvasElement.width;
+        const shoulderY = adjustedShoulder.y * canvasElement.height;
+        const earX = ear.x * canvasElement.width;
+        const earY = ear.y * canvasElement.height;
+
+        drawLine(canvasCtx, shoulderX, shoulderY, earX, earY, ANGLE_LINE_COLOR, SIDE_ANGLE_LINE_WIDTH);
+
+        const dx = earX - shoulderX;
+        const dy = shoulderY - earY;
+        const verticalDeviationAngle = Math.atan2(Math.abs(dx), Math.max(Math.abs(dy), 0.0001)) * (180 / Math.PI);
+        const smoothedSideAngle = smoothAngleValue(verticalDeviationAngle, smoothedSideAngleRef, SIDE_ANGLE_SMOOTHING_ALPHA);
+        sideAngleDeviation = smoothedSideAngle;
+        const midX = (shoulderX + earX) / 2;
+        const midY = (shoulderY + earY) / 2;
+        const lineLength = Math.hypot(dx, earY - shoulderY) || 1;
+        const normalX = -(earY - shoulderY) / lineLength;
+        const normalY = (earX - shoulderX) / lineLength;
+        const textX = midX + (normalX * SIDE_ANGLE_TEXT_OFFSET_PX);
+        const textY = midY + (normalY * SIDE_ANGLE_TEXT_OFFSET_PX);
+
+        canvasCtx.font = `900 ${SIDE_ANGLE_TEXT_FONT_SIZE}px Roboto, sans-serif`;
+        canvasCtx.lineWidth = 15;
+        canvasCtx.strokeStyle = 'rgba(0, 0, 0, 0.5)';
+        canvasCtx.textAlign = 'center';
+        canvasCtx.textBaseline = 'middle';
+        const nextDisplayAngle = Math.round(smoothedSideAngle);
+        if (typeof displayedSideAngleRef.current !== 'number') {
+          displayedSideAngleRef.current = nextDisplayAngle;
+        } else if (Math.abs(nextDisplayAngle - displayedSideAngleRef.current) >= SIDE_ANGLE_DISPLAY_STEP_DEGREES) {
+          displayedSideAngleRef.current = nextDisplayAngle;
+        }
+        canvasCtx.strokeText(`${displayedSideAngleRef.current}°`, textX, textY);
+        canvasCtx.fillStyle = ANGLE_TEXT_COLOR;
+        canvasCtx.fillText(`${displayedSideAngleRef.current}°`, textX, textY);
+      } else {
+        smoothedSideAngleRef.current = null;
+        displayedSideAngleRef.current = null;
+      }
 
       if (adjustedShoulder) {
         drawCircle(
@@ -362,41 +677,44 @@ function App() {
       if (isVisible(ear)) {
         drawCircle(canvasCtx, ear.x * canvasElement.width, ear.y * canvasElement.height, EAR_POINT_RADIUS, LANDMARK_COLORS.ear);
       }
-
-      if (adjustedShoulder && isVisible(ear)) {
-        const shoulderX = adjustedShoulder.x * canvasElement.width;
-        const shoulderY = adjustedShoulder.y * canvasElement.height;
-        const earX = ear.x * canvasElement.width;
-        const earY = ear.y * canvasElement.height;
-
-        drawLine(canvasCtx, shoulderX, shoulderY, earX, earY, ANGLE_LINE_COLOR, 2);
-
-        const dx = earX - shoulderX;
-        const dy = shoulderY - earY;
-        const verticalDeviationAngle = Math.atan2(Math.abs(dx), Math.max(Math.abs(dy), 0.0001)) * (180 / Math.PI);
-        sideAngleDeviation = verticalDeviationAngle;
-        const textX = ((shoulderX + earX) / 2) + 8;
-        const textY = ((shoulderY + earY) / 2) - 8;
-
-        canvasCtx.font = 'bold 14px Roboto, sans-serif';
-        canvasCtx.fillStyle = ANGLE_TEXT_COLOR;
-        canvasCtx.fillText(`${verticalDeviationAngle.toFixed(1)}°`, textX, textY);
+      if (isVisible(adjustedElbow)) {
+        drawCircle(
+          canvasCtx,
+          adjustedElbow.x * canvasElement.width,
+          adjustedElbow.y * canvasElement.height,
+          ELBOW_POINT_RADIUS,
+          LANDMARK_COLORS.elbow
+        );
       }
+      if (isVisible(adjustedWrist)) {
+        drawCircle(
+          canvasCtx,
+          adjustedWrist.x * canvasElement.width,
+          adjustedWrist.y * canvasElement.height,
+          WRIST_POINT_RADIUS,
+          LANDMARK_COLORS.wrist
+        );
+      }
+      const roundedAngle = typeof sideAngleDeviation === 'number'
+        ? Number(sideAngleDeviation.toFixed(1))
+        : null;
+      setLiveSideAngle((prev) => (prev === roundedAngle ? prev : roundedAngle));
+    } else {
+      smoothedSideAngleRef.current = null;
+      smoothedElbowAngleRef.current = null;
+      displayedSideAngleRef.current = null;
+      setLiveSideAngle((prev) => (prev === null ? prev : null));
     }
 
     if(btnSelected){
       goodPostureRef.current = landmarks.map((landmark) => ({...landmark})); // obtain a copy of the calibrated pose
       trackedSideRef.current = chooseTrackedSide(landmarks);
       badPostureCountRef.current = 0;
-      sidePointOffsetsRef.current = {
-        ear: { x: 0, y: 0 },
-        shoulder: { x: 0, y: 0 }
-      };
       console.log("בוצע כיול חדש ונשמרו נקודות הייחוס.");
       setBtn(false);
     }
 
-    if(!goodPostureRef.current){ //the calibrate button has not been selected yet
+    if(currentViewMode !== 'side' && !goodPostureRef.current){ //the calibrate button has not been selected yet
       return;
     }
 
@@ -404,16 +722,24 @@ function App() {
     let isBadPosture = false;
 
     if (currentViewMode === 'side') {
-      const side = trackedSideRef.current;
-      feedback = getSidePostureFeedback(landmarks, goodPostureRef.current, side);
-      isBadPosture = !feedback.includes(GOOD_POSTURE_FEEDBACK);
+      const angleThreshold = soundConfigRef.current.angleThreshold;
+      if (typeof sideAngleDeviation === 'number') {
+        const roundedAngle = Number(sideAngleDeviation.toFixed(1));
+        isBadPosture = roundedAngle > angleThreshold;
+        feedback = isBadPosture
+          ? `זווית חריגה: ${roundedAngle}° (מעל ${angleThreshold}°)`
+          : GOOD_POSTURE_FEEDBACK;
+      } else {
+        isBadPosture = true;
+        feedback = "לא ניתן לחשב זווית כרגע";
+      }
 
       if (typeof sideAngleDeviation === 'number' && soundConfigRef.current.enabled) {
         const now = Date.now();
         const { angleThreshold, durationSeconds } = soundConfigRef.current;
         const durationMs = durationSeconds * 1000;
 
-        if (sideAngleDeviation >= angleThreshold) {
+        if (sideAngleDeviation > angleThreshold) {
           if (!angleAlertStartRef.current) {
             angleAlertStartRef.current = now;
           }
@@ -421,7 +747,12 @@ function App() {
           const sustainedMs = now - angleAlertStartRef.current;
           if (sustainedMs >= durationMs && now - lastAngleAlertRef.current >= ANGLE_ALERT_COOLDOWN_MS) {
             const severity = Math.min(1, (sideAngleDeviation - angleThreshold) / 20);
+            const roundedAngleForLog = Number(sideAngleDeviation.toFixed(1));
+            console.log(
+              `[Beep Alert] ranAt=${new Date(now).toISOString()} angle=${roundedAngleForLog} threshold=${angleThreshold}`
+            );
             playAngleAlert(severity);
+            captureBeepSnapshot(canvasElement);
             lastAngleAlertRef.current = now;
           }
         } else {
@@ -485,7 +816,7 @@ function App() {
       isBadPosture = badPosture(landmarks, goodPostureRef.current);
     }
 
-    setPostureFeedback(feedback);
+    setPostureFeedback(feedback === GOOD_POSTURE_FEEDBACK ? '' : feedback);
 
     if(isBadPosture){
       badPostureCountRef.current++;
@@ -503,39 +834,140 @@ function App() {
 
   /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(()=>{
-    const pose = new Pose({locateFile: (file) => {
-      return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
-    }});
-    pose.setOptions({
-      modelComplexity: 1,
-      smoothLandmarks: true,
-      enableSegmentation: false,
-      smoothSegmentation: false,
-      minDetectionConfidence: MIN_DETECTION_CONFIDENCE,
-      minTrackingConfidence: MIN_TRACKING_CONFIDENCE
+    const runId = ++initRunIdRef.current;
+    let isCancelled = false;
+    const isCurrentRun = () => !isCancelled && initRunIdRef.current === runId;
+
+    const updateStartupStage = (progress, stageText, detailText, isStuck = false) => {
+      if (!isCurrentRun()) return;
+      setStartupStatus((prev) => ({
+        ...prev,
+        progress,
+        stageText,
+        detailText,
+        isStuck
+      }));
+    };
+
+    const waitForVideoReady = (videoEl, timeoutMs = 12000) => new Promise((resolve, reject) => {
+      if (!videoEl) {
+        reject(new Error('Webcam video element is not available.'));
+        return;
+      }
+      if (videoEl.readyState >= 2) {
+        resolve();
+        return;
+      }
+
+      const timeoutId = window.setTimeout(() => {
+        cleanup();
+        reject(new Error(`Timed out waiting for camera metadata after ${timeoutMs}ms.`));
+      }, timeoutMs);
+
+      const onReady = () => {
+        cleanup();
+        resolve();
+      };
+
+      const cleanup = () => {
+        window.clearTimeout(timeoutId);
+        videoEl.removeEventListener('loadedmetadata', onReady);
+        videoEl.removeEventListener('canplay', onReady);
+      };
+
+      videoEl.addEventListener('loadedmetadata', onReady);
+      videoEl.addEventListener('canplay', onReady);
     });
-    pose.onResults(onResults);
-    
-    if(
-      typeof webcamRef.current !== 'undefined' &&
-      webcamRef.current !== null
-    ) {
+
+    const initialize = async () => {
+      startupBeginTsRef.current = Date.now();
+      startupFrameCountRef.current = 0;
+      modelLoadStartTsRef.current = Date.now();
+      isPoseReadyRef.current = false;
+
+      console.log(`[MediaPipe] Starting Pose model load at ${new Date(modelLoadStartTsRef.current).toISOString()}.`);
+      updateStartupStage(20, 'טוען מנוע Pose...', 'מכין את מודול הזיהוי');
+
+      const pose = new Pose({locateFile: (file) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+      }});
+      poseRef.current = pose;
+
+      pose.setOptions({
+        modelComplexity: MODEL_COMPLEXITY,
+        smoothLandmarks: true,
+        enableSegmentation: false,
+        smoothSegmentation: false,
+        minDetectionConfidence: MIN_DETECTION_CONFIDENCE,
+        minTrackingConfidence: MIN_TRACKING_CONFIDENCE
+      });
+      pose.onResults(onResults);
+
+      if (!webcamRef.current?.video) {
+        throw new Error('Webcam not mounted yet.');
+      }
+
+      updateStartupStage(35, 'מפעיל מצלמה...', 'ממתין למטא-דאטה מהמצלמה');
+      await waitForVideoReady(webcamRef.current.video);
+      if (!isCurrentRun()) return;
+
+      updateStartupStage(50, 'מחמם את המודל...', 'הרצה ראשונה של Pose (WASM/WebGL)');
+      await pose.send({ image: webcamRef.current.video });
+      if (!isCurrentRun()) return;
+      isPoseReadyRef.current = true;
+
+      updateStartupStage(70, 'מתחיל זרימת וידאו...', 'עיבוד פריימים רציף');
       const camera = new cam.Camera(webcamRef.current.video, {
-        onFrame: async () => { //this block runs once every frame
-          await pose.send({image: webcamRef.current.video});
+        onFrame: async () => {
+          if (!isPoseReadyRef.current || isSendingFrameRef.current || !poseRef.current || !webcamRef.current?.video) {
+            return;
+          }
+          isSendingFrameRef.current = true;
+          try {
+            await poseRef.current.send({ image: webcamRef.current.video });
+          } finally {
+            isSendingFrameRef.current = false;
+          }
         },
         width: 640,
         height: 480
       });
-      camera.start();
-    }
+      cameraRef.current = camera;
+      await camera.start();
+      if (!isCurrentRun()) return;
+      updateStartupStage(85, 'ממתין לזיהוי תנוחה...', 'מחפש תנוחה ראשונה בפריים');
+    };
+
+    initialize().catch((error) => {
+      console.error('[MediaPipe] Startup failed:', error);
+      updateStartupStage(
+        100,
+        'שגיאת אתחול',
+        error?.message || 'טעינת המודל נכשלה. נסו לרענן או לבדוק חיבור רשת.',
+        true
+      );
+    });
 
     if(!("Notification" in window)) {
       alert("הדפדפן לא תומך בהתראות שולחן עבודה");
-    } else {
-      Notification.requestPermission();
+    } else if (Notification.permission === "default") {
+      // Only request if not already requested/denied
+      // User must trigger this via a gesture for it to work properly
     }
 
+    return () => {
+      isCancelled = true;
+      isPoseReadyRef.current = false;
+      isSendingFrameRef.current = false;
+      if (cameraRef.current && typeof cameraRef.current.stop === 'function') {
+        cameraRef.current.stop();
+      }
+      cameraRef.current = null;
+      if (poseRef.current && typeof poseRef.current.close === 'function') {
+        poseRef.current.close();
+      }
+      poseRef.current = null;
+    };
   }, []);
   /* eslint-enable react-hooks/exhaustive-deps */
 
@@ -549,37 +981,41 @@ function App() {
     const rect = canvasEl.getBoundingClientRect();
     const pointerX = clamp((clientX - rect.left) / rect.width, 0, 1);
     const pointerY = clamp((clientY - rect.top) / rect.height, 0, 1);
-    sidePointOffsetsRef.current = {
+    sidePointOffsetsRef.current = normalizeSidePointOffsets({
       ...sidePointOffsetsRef.current,
       [dragTarget]: {
         x: clamp(pointerX - pointBase.x, -POINT_OFFSET_LIMIT, POINT_OFFSET_LIMIT),
         y: clamp(pointerY - pointBase.y, -POINT_OFFSET_LIMIT, POINT_OFFSET_LIMIT)
       }
-    };
+    });
+    saveSidePointOffsets(sidePointOffsetsRef.current);
   };
 
   const handleCanvasPointerDown = (event) => {
     if (viewModeRef.current !== 'side') return;
     const canvasEl = canvasRef.current;
-    const rawEar = latestRawSidePointsRef.current.ear;
-    const rawShoulder = latestRawSidePointsRef.current.shoulder;
-    if (!canvasEl || !rawEar || !rawShoulder) return;
-
-    const adjustedEar = applyPointOffset(rawEar, sidePointOffsetsRef.current.ear);
-    const adjustedShoulder = applyPointOffset(rawShoulder, sidePointOffsetsRef.current.shoulder);
-    if (!isVisible(adjustedEar)) return;
+    if (!canvasEl) return;
 
     const rect = canvasEl.getBoundingClientRect();
     const pointerX = event.clientX - rect.left;
     const pointerY = event.clientY - rect.top;
-    const earX = adjustedEar.x * rect.width;
-    const earY = adjustedEar.y * rect.height;
-    const shoulderX = adjustedShoulder.x * rect.width;
-    const shoulderY = adjustedShoulder.y * rect.height;
-    const earDistance = Math.hypot(pointerX - earX, pointerY - earY);
-    const shoulderDistance = Math.hypot(pointerX - shoulderX, pointerY - shoulderY);
-    const nearestPoint = earDistance <= shoulderDistance ? 'ear' : 'shoulder';
-    const nearestDistance = Math.min(earDistance, shoulderDistance);
+
+    const draggablePoints = ['ear', 'shoulder', 'elbow', 'wrist'];
+    let nearestPoint = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    draggablePoints.forEach((pointKey) => {
+      const rawPoint = latestRawSidePointsRef.current[pointKey];
+      const adjustedPoint = applyPointOffset(rawPoint, sidePointOffsetsRef.current[pointKey]);
+      if (!adjustedPoint || !isVisible(adjustedPoint)) return;
+      const pointX = adjustedPoint.x * rect.width;
+      const pointY = adjustedPoint.y * rect.height;
+      const distance = Math.hypot(pointerX - pointX, pointerY - pointY);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestPoint = pointKey;
+      }
+    });
 
     if (nearestDistance <= POINT_DRAG_HIT_RADIUS_PX) {
       draggingPointRef.current = nearestPoint;
@@ -599,9 +1035,19 @@ function App() {
   };
 
   useEffect(() => {
+    saveUiSettings({
+      viewMode,
+      soundConfig
+    });
+  }, [viewMode, soundConfig]);
+
+  useEffect(() => {
     goodPostureRef.current = null;
     badPostureCountRef.current = 0;
     smoothedShoulderRef.current = null;
+    smoothedSideAngleRef.current = null;
+    smoothedElbowAngleRef.current = null;
+    displayedSideAngleRef.current = null;
     setSideConfidence({
       side: trackedSideRef.current,
       ear: null,
@@ -611,6 +1057,7 @@ function App() {
     angleAlertStartRef.current = null;
     lastAngleAlertRef.current = 0;
     setPostureFeedback('');
+    setLiveSideAngle(null);
     changeStyleProperty('--posture-status',"'לא בוצע כיול'");
   }, [viewMode]);
 
@@ -626,7 +1073,7 @@ function App() {
 
   return (
     <div className="flex flex-col min-h-screen" dir="rtl">
-      {!loaded && <LoadingScreen />}
+      {!loaded && <LoadingScreen startupStatus={startupStatus} />}
       <div className={`flex-grow App bg-gradient-to-br from-deep-space to-space-gray flex flex-col items-center justify-center p-4 sm:p-8 ${!loaded ? 'hidden' : ''}`}>
         <div className="w-full max-w-7xl mx-auto flex flex-col xl:flex-row items-center justify-center space-y-8 xl:space-y-0 xl:space-x-8">
           <Menu
@@ -638,35 +1085,85 @@ function App() {
             minTrackingConfidence={MIN_TRACKING_CONFIDENCE}
             soundConfig={soundConfig}
             onSoundConfigChange={setSoundConfig}
+            liveSideAngle={liveSideAngle}
           />
-          <div className="display relative rounded-3xl overflow-hidden w-full max-w-lg xl:max-w-xl bg-deep-space">
-            <div className="absolute inset-0 bg-gradient-to-r from-neon-blue to-neon-green opacity-5 z-10"></div>
-            <Webcam
-              ref={webcamRef}
-              className="webcam rounded-3xl w-full opacity-90"
-              width="100%"
-              height="auto"
-            />
-            <canvas
-              ref={canvasRef}
-              className="canvas absolute top-0 left-0 rounded-3xl w-full h-full z-20"
-              onPointerDown={handleCanvasPointerDown}
-              onPointerMove={handleCanvasPointerMove}
-              onPointerUp={stopPointDragging}
-              onPointerLeave={stopPointDragging}
-              onPointerCancel={stopPointDragging}
-            />
-            {postureFeedback && (
-              <div className="absolute bottom-4 left-4 right-4 bg-deep-space bg-opacity-70 text-neon-green px-3 py-2 rounded-lg text-sm font-medium z-30 backdrop-filter backdrop-blur-sm">
-                {postureFeedback}
-              </div>
-            )}
+          <div className="w-full max-w-lg xl:max-w-xl">
+            <div className="display relative rounded-3xl overflow-hidden w-full bg-deep-space">
+              <div className="absolute inset-0 bg-gradient-to-r from-neon-blue to-neon-green opacity-5 z-10"></div>
+              <Webcam
+                ref={webcamRef}
+                className="webcam rounded-3xl w-full opacity-90"
+                width="100%"
+                height="auto"
+              />
+              <canvas
+                ref={canvasRef}
+                className="canvas absolute top-0 left-0 rounded-3xl w-full h-full z-20"
+                onPointerDown={handleCanvasPointerDown}
+                onPointerMove={handleCanvasPointerMove}
+                onPointerUp={stopPointDragging}
+                onPointerLeave={stopPointDragging}
+                onPointerCancel={stopPointDragging}
+              />
+              {postureFeedback && (
+                <div className="absolute bottom-4 left-4 right-4 bg-deep-space bg-opacity-70 text-neon-green px-3 py-2 rounded-lg text-sm font-medium z-30 backdrop-filter backdrop-blur-sm">
+                  {postureFeedback}
+                </div>
+              )}
+            </div>
+            <div className="mt-4 rounded-2xl border border-neon-blue border-opacity-30 bg-deep-space bg-opacity-70 p-3">
+              <p className="text-neon-blue text-sm mb-2">גלריית צפצופים (לא נשמר לדיסק)</p>
+              {beepSnapshots.length === 0 ? (
+                <p className="text-xs text-neon-green opacity-80">
+                  עדיין אין תמונות. תמונה תתווסף כאן כשיש צפצוף.
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {beepSnapshots.map((snapshot, index) => (
+                    <div key={snapshot.id} className="rounded-lg overflow-hidden border border-neon-green border-opacity-30">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedSnapshot(snapshot)}
+                        className="w-full text-left"
+                      >
+                        <img
+                          src={snapshot.dataUrl}
+                          alt={`beep-${snapshot.createdAt}`}
+                          className={`w-full object-cover ${index === 0 ? 'h-48 sm:h-56' : 'h-36 sm:h-40'}`}
+                        />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
       <footer className="bg-deep-space text-neon-blue py-2 text-center">
         <p className="text-sm">נוצר על ידי Prince</p>
       </footer>
+      {selectedSnapshot && (
+        <div
+          className="fixed inset-0 z-[9999] bg-black bg-opacity-100 flex items-center justify-center p-4"
+          onClick={() => setSelectedSnapshot(null)}
+        >
+          <div className="relative w-full max-w-5xl" onClick={(event) => event.stopPropagation()}>
+            <button
+              type="button"
+              className="absolute top-2 right-2 z-10 px-3 py-1 rounded bg-deep-space text-neon-blue border border-neon-blue border-opacity-60"
+              onClick={() => setSelectedSnapshot(null)}
+            >
+              סגור
+            </button>
+            <img
+              src={selectedSnapshot.dataUrl}
+              alt={`expanded-beep-${selectedSnapshot.createdAt}`}
+              className="w-full max-h-[85vh] object-contain rounded-2xl border border-neon-green border-opacity-40"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
