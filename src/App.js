@@ -87,6 +87,8 @@ function App() {
   const trackedSideRef = useRef('left');
   const viewModeRef = useRef(initialUiSettings.viewMode);
   const smoothedShoulderRef = useRef(null);
+  const smoothedElbowRef = useRef(null);
+  const smoothedWristRef = useRef(null);
   const smoothedSideAngleRef = useRef(null);
   const smoothedElbowAngleRef = useRef(null);
   const displayedSideAngleRef = useRef(null);
@@ -125,7 +127,19 @@ function App() {
   const VISIBILITY_THRESHOLD = 0.5;
   const SHOULDER_MIN_VISIBILITY = 0.6;
   const SHOULDER_SMOOTHING_ALPHA = 0.2;
-  const SHOULDER_DEADZONE_PX = 3;
+  const SHOULDER_DEADZONE_PX = 4;
+  const SHOULDER_SOFT_ZONE_PX = 10;
+  const SHOULDER_SOFT_ALPHA = 0.1;
+  const ELBOW_MIN_VISIBILITY = 0.55;
+  const ELBOW_SMOOTHING_ALPHA = 0.18;
+  const ELBOW_DEADZONE_PX = 8;
+  const ELBOW_SOFT_ZONE_PX = 18;
+  const ELBOW_SOFT_ALPHA = 0.07;
+  const WRIST_MIN_VISIBILITY = 0.5;
+  const WRIST_SMOOTHING_ALPHA = 0.16;
+  const WRIST_DEADZONE_PX = 9;
+  const WRIST_SOFT_ZONE_PX = 20;
+  const WRIST_SOFT_ALPHA = 0.06;
   const EAR_POINT_RADIUS = 30;
   const ARM_POINT_RADIUS = 30;
   const ELBOW_POINT_RADIUS = 24;
@@ -181,6 +195,22 @@ function App() {
   const cameraRef = useRef(null);
   const isSendingFrameRef = useRef(false);
   const isPoseReadyRef = useRef(false);
+  const startupRetryTimerRef = useRef(null);
+  const STARTUP_AUTO_RELOAD_STORAGE_KEY = 'ergoSmart.startupAutoReloadAttempts';
+  const STARTUP_AUTO_RELOAD_MAX_ATTEMPTS = 1;
+  const STARTUP_AUTO_RELOAD_DELAY_MS = 2000;
+
+  const restartApp = () => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    try {
+      window.sessionStorage.removeItem(STARTUP_AUTO_RELOAD_STORAGE_KEY);
+    } catch (error) {
+      // Ignore storage errors and continue with reload.
+    }
+    window.location.reload();
+  };
 
   function playAngleAlert(severity = 1) {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -255,19 +285,16 @@ function App() {
     }
 
     const prev = smoothedShoulderRef.current;
-    const deltaPx = Math.hypot(
-      (shoulder.x - prev.x) * canvasWidth,
-      (shoulder.y - prev.y) * canvasHeight
+    const next = getAdaptiveSmoothedPoint(
+      prev,
+      shoulder,
+      canvasWidth,
+      canvasHeight,
+      SHOULDER_DEADZONE_PX,
+      SHOULDER_SOFT_ZONE_PX,
+      SHOULDER_SOFT_ALPHA,
+      SHOULDER_SMOOTHING_ALPHA
     );
-
-    if (deltaPx < SHOULDER_DEADZONE_PX) {
-      return prev;
-    }
-
-    const next = {
-      x: prev.x + ((shoulder.x - prev.x) * SHOULDER_SMOOTHING_ALPHA),
-      y: prev.y + ((shoulder.y - prev.y) * SHOULDER_SMOOTHING_ALPHA)
-    };
     smoothedShoulderRef.current = next;
     return next;
   }
@@ -304,6 +331,92 @@ function App() {
         y: Number.isFinite(wristY) ? clamp(wristY, -POINT_OFFSET_LIMIT, POINT_OFFSET_LIMIT) : 0
       }
     };
+  }
+
+  function getStableElbowPoint(elbow, canvasWidth, canvasHeight) {
+    if (!elbow) return smoothedElbowRef.current;
+
+    const visibility = typeof elbow.visibility === 'number' ? elbow.visibility : 1;
+    if (visibility < ELBOW_MIN_VISIBILITY) {
+      return smoothedElbowRef.current;
+    }
+
+    if (!smoothedElbowRef.current) {
+      smoothedElbowRef.current = { ...elbow };
+      return smoothedElbowRef.current;
+    }
+
+    const prev = smoothedElbowRef.current;
+    const next = getAdaptiveSmoothedPoint(
+      prev,
+      elbow,
+      canvasWidth,
+      canvasHeight,
+      ELBOW_DEADZONE_PX,
+      ELBOW_SOFT_ZONE_PX,
+      ELBOW_SOFT_ALPHA,
+      ELBOW_SMOOTHING_ALPHA
+    );
+    smoothedElbowRef.current = next;
+    return next;
+  }
+
+  function getStableWristPoint(wrist, canvasWidth, canvasHeight) {
+    if (!wrist) return smoothedWristRef.current;
+
+    const visibility = typeof wrist.visibility === 'number' ? wrist.visibility : 1;
+    if (visibility < WRIST_MIN_VISIBILITY) {
+      return smoothedWristRef.current;
+    }
+
+    if (!smoothedWristRef.current) {
+      smoothedWristRef.current = { ...wrist };
+      return smoothedWristRef.current;
+    }
+
+    const prev = smoothedWristRef.current;
+    const next = getAdaptiveSmoothedPoint(
+      prev,
+      wrist,
+      canvasWidth,
+      canvasHeight,
+      WRIST_DEADZONE_PX,
+      WRIST_SOFT_ZONE_PX,
+      WRIST_SOFT_ALPHA,
+      WRIST_SMOOTHING_ALPHA
+    );
+    smoothedWristRef.current = next;
+    return next;
+  }
+
+  function getAdaptiveSmoothedPoint(prev, incoming, canvasWidth, canvasHeight, deadzonePx, softZonePx, softAlpha, fastAlpha) {
+    const deltaPx = Math.hypot(
+      (incoming.x - prev.x) * canvasWidth,
+      (incoming.y - prev.y) * canvasHeight
+    );
+
+    // Hold point steady while movement is inside the jitter band.
+    if (deltaPx < deadzonePx) {
+      return prev;
+    }
+
+    const alpha = deltaPx < softZonePx ? softAlpha : fastAlpha;
+    const next = {
+      ...incoming,
+      x: prev.x + ((incoming.x - prev.x) * alpha),
+      y: prev.y + ((incoming.y - prev.y) * alpha)
+    };
+
+    // Suppress sub-pixel tail drift after smoothing.
+    const residualPx = Math.hypot(
+      (next.x - prev.x) * canvasWidth,
+      (next.y - prev.y) * canvasHeight
+    );
+    if (residualPx < 0.6) {
+      return prev;
+    }
+
+    return next;
   }
 
   function loadSidePointOffsets() {
@@ -519,6 +632,8 @@ function App() {
       postureRef.current = -1;//change pose state to "undetected", can't track pose
       setLiveSideAngle(null);
       smoothedShoulderRef.current = null;
+      smoothedElbowRef.current = null;
+      smoothedWristRef.current = null;
       smoothedSideAngleRef.current = null;
       smoothedElbowAngleRef.current = null;
       displayedSideAngleRef.current = null;
@@ -536,6 +651,13 @@ function App() {
       appReadyRef.current = true;
       setLoaded(true);
       changeStyleProperty("--loader-display","none");
+      if (typeof window !== 'undefined') {
+        try {
+          window.sessionStorage.removeItem(STARTUP_AUTO_RELOAD_STORAGE_KEY);
+        } catch (error) {
+          // Ignore storage errors.
+        }
+      }
       setStartupStatus({
         progress: 100,
         stageText: 'המערכת מוכנה',
@@ -564,8 +686,8 @@ function App() {
       const shoulder = landmarks[indices.shoulder];
       const stableShoulder = getStableShoulderPoint(shoulder, canvasElement.width, canvasElement.height);
       const rawEar = landmarks[indices.ear];
-      const elbow = landmarks[indices.elbow];
-      const wrist = landmarks[indices.wrist];
+      const elbow = getStableElbowPoint(landmarks[indices.elbow], canvasElement.width, canvasElement.height);
+      const wrist = getStableWristPoint(landmarks[indices.wrist], canvasElement.width, canvasElement.height);
       latestRawSidePointsRef.current = {
         ear: rawEar,
         shoulder: stableShoulder,
@@ -700,6 +822,8 @@ function App() {
         : null;
       setLiveSideAngle((prev) => (prev === roundedAngle ? prev : roundedAngle));
     } else {
+      smoothedElbowRef.current = null;
+      smoothedWristRef.current = null;
       smoothedSideAngleRef.current = null;
       smoothedElbowAngleRef.current = null;
       displayedSideAngleRef.current = null;
@@ -938,14 +1062,50 @@ function App() {
       updateStartupStage(85, 'ממתין לזיהוי תנוחה...', 'מחפש תנוחה ראשונה בפריים');
     };
 
-    initialize().catch((error) => {
-      console.error('[MediaPipe] Startup failed:', error);
+    const handleStartupFailure = (error) => {
+      if (!isCurrentRun()) return;
+      const rawMessage = String(error?.message || error || '');
+      const isAbortSignature = /Module\.arguments|arguments_|Aborted\(/i.test(rawMessage);
+      const fallbackMessage = 'טעינת המודל נכשלה. נסו לרענן או לבדוק חיבור רשת.';
+
+      if (typeof window !== 'undefined' && isAbortSignature) {
+        let attempts = 0;
+        try {
+          attempts = Number(window.sessionStorage.getItem(STARTUP_AUTO_RELOAD_STORAGE_KEY) || '0');
+        } catch (storageError) {
+          attempts = 0;
+        }
+
+        if (attempts < STARTUP_AUTO_RELOAD_MAX_ATTEMPTS) {
+          try {
+            window.sessionStorage.setItem(STARTUP_AUTO_RELOAD_STORAGE_KEY, String(attempts + 1));
+          } catch (storageError) {
+            // Ignore storage errors and still try reload.
+          }
+          updateStartupStage(
+            100,
+            'שגיאת אתחול',
+            'אירעה שגיאת WASM/MediaPipe. מרענן אוטומטית בעוד 2 שניות...',
+            true
+          );
+          startupRetryTimerRef.current = window.setTimeout(() => {
+            window.location.reload();
+          }, STARTUP_AUTO_RELOAD_DELAY_MS);
+          return;
+        }
+      }
+
       updateStartupStage(
         100,
         'שגיאת אתחול',
-        error?.message || 'טעינת המודל נכשלה. נסו לרענן או לבדוק חיבור רשת.',
+        rawMessage || fallbackMessage,
         true
       );
+    };
+
+    initialize().catch((error) => {
+      console.error('[MediaPipe] Startup failed:', error);
+      handleStartupFailure(error);
     });
 
     if(!("Notification" in window)) {
@@ -967,6 +1127,10 @@ function App() {
         poseRef.current.close();
       }
       poseRef.current = null;
+      if (startupRetryTimerRef.current) {
+        window.clearTimeout(startupRetryTimerRef.current);
+        startupRetryTimerRef.current = null;
+      }
     };
   }, []);
   /* eslint-enable react-hooks/exhaustive-deps */
@@ -1045,6 +1209,8 @@ function App() {
     goodPostureRef.current = null;
     badPostureCountRef.current = 0;
     smoothedShoulderRef.current = null;
+    smoothedElbowRef.current = null;
+    smoothedWristRef.current = null;
     smoothedSideAngleRef.current = null;
     smoothedElbowAngleRef.current = null;
     displayedSideAngleRef.current = null;
@@ -1073,7 +1239,7 @@ function App() {
 
   return (
     <div className="flex flex-col min-h-screen" dir="rtl">
-      {!loaded && <LoadingScreen startupStatus={startupStatus} />}
+      {!loaded && <LoadingScreen startupStatus={startupStatus} onRetry={restartApp} />}
       <div className={`flex-grow App bg-gradient-to-br from-deep-space to-space-gray flex flex-col items-center justify-center p-4 sm:p-8 ${!loaded ? 'hidden' : ''}`}>
         <div className="w-full max-w-7xl mx-auto flex flex-col xl:flex-row items-center justify-center space-y-8 xl:space-y-0 xl:space-x-8">
           <Menu

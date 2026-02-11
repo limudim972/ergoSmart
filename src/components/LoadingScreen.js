@@ -1,6 +1,6 @@
 import React from 'react';
 
-export function LoadingScreen({ startupStatus }) {
+export function LoadingScreen({ startupStatus, onRetry }) {
     const progress = Math.max(0, Math.min(100, Number(startupStatus?.progress ?? 0)));
     const stageText = startupStatus?.stageText || "מכייל רשתות נוירונים...";
     const detailText = startupStatus?.detailText || "";
@@ -37,6 +37,15 @@ export function LoadingScreen({ startupStatus }) {
                         style={{ width: `${progress}%` }}
                     />
                 </div>
+                {isStuck && typeof onRetry === "function" && (
+                    <button
+                        type="button"
+                        onClick={onRetry}
+                        className="mt-4 px-4 py-2 rounded-lg bg-red-400 text-deep-space font-semibold hover:bg-red-300 transition-colors"
+                    >
+                        נסה שוב
+                    </button>
+                )}
             </div>
         </div>
     )
