@@ -6,7 +6,7 @@ export function MenuHeader(props) {
           <h3 className="text-2xl font-bold mb-4">הוראות</h3>
           <ol className="list-decimal list-inside space-y-2">
             <li>{isSideView ? "השאירו את הראש, הכתף והזרוע בתוך הפריים" : "שבו זקוף עם יציבה טובה, כשהראש והכתפיים בפריים"}</li>
-            <li>לחצו על כפתור "כיול" למטה</li>
+            {!isSideView && <li>לחצו על כפתור "כיול" למטה</li>}
             <li>המשיכו לעבוד כרגיל. נעדכן אתכם אם תתכופפו</li>
           </ol>
         </div>

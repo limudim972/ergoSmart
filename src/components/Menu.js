@@ -47,8 +47,6 @@ export function Menu(props) {
         <p className="text-white mb-1">צד במעקב: <span className="text-neon-green uppercase">{confidence.side || "לא זמין"}</span></p>
         <p className="text-white mb-1">אוזן: <span className="text-neon-green">{formatConfidence(confidence.ear)}</span></p>
         <p className="text-white mb-2">כתף: <span className="text-neon-green">{formatConfidence(confidence.shoulder)}</span></p>
-        <p className="text-white">minDetectionConfidence: <span className="text-neon-blue">{props.minDetectionConfidence}</span></p>
-        <p className="text-white">minTrackingConfidence: <span className="text-neon-blue">{props.minTrackingConfidence}</span></p>
       </div>
       <div className="rounded-xl border border-neon-green border-opacity-30 bg-space-gray bg-opacity-40 p-3 mb-4 text-sm">
         <label className="flex items-center gap-2 text-white mb-3">
@@ -84,27 +82,31 @@ export function Menu(props) {
               זווית נוכחית: <span className="text-white">{liveAngleValue === null ? "לא זמין" : `${liveAngleValue.toFixed(1)}°`}</span>
             </p>
           </label>
-          <label className="text-white">
-            משך יציבה לקויה לפני צליל (שניות): <span className="text-neon-blue">{props.soundConfig.durationSeconds}</span>
-            <div dir="ltr">
-              <input
-                type="range"
-                min="1"
-                max="60"
-                step="1"
-                value={props.soundConfig.durationSeconds}
-                onChange={(e) => updateSoundConfig({ durationSeconds: Number(e.target.value) })}
-                className="mt-1 w-full"
-              />
-            </div>
-            <p className="text-xs text-neon-blue mt-1 opacity-80">הצליל יושמע רק אם יש יציבה לקויה והזווית נשארת מעל הסף למשך הזמן הזה.</p>
-          </label>
+          {props.viewMode !== "side" && (
+            <label className="text-white">
+              משך יציבה לקויה לפני צליל (שניות): <span className="text-neon-blue">{props.soundConfig.durationSeconds}</span>
+              <div dir="ltr">
+                <input
+                  type="range"
+                  min="1"
+                  max="60"
+                  step="1"
+                  value={props.soundConfig.durationSeconds}
+                  onChange={(e) => updateSoundConfig({ durationSeconds: Number(e.target.value) })}
+                  className="mt-1 w-full"
+                />
+              </div>
+              <p className="text-xs text-neon-blue mt-1 opacity-80">הצליל יושמע רק אם יש יציבה לקויה והזווית נשארת מעל הסף למשך הזמן הזה.</p>
+            </label>
+          )}
         </div>
       </div>
       <PostureStatus state={state} />
-      <div className="flex flex-col sm:flex-row items-center justify-center space-y-4 sm:space-y-0 sm:space-x-4 mt-6">
-        <CalibrateBtn state={state} onClickCallback={calibratePose} />
-      </div>
+      {props.viewMode !== "side" && (
+        <div className="flex flex-col sm:flex-row items-center justify-center space-y-4 sm:space-y-0 sm:space-x-4 mt-6">
+          <CalibrateBtn state={state} onClickCallback={calibratePose} />
+        </div>
+      )}
     </div>
   );
 }
