@@ -900,8 +900,6 @@ function App() {
         sideAngleDeviation = smoothedSideAngle;
         const midX = (shoulderX + earX) / 2;
         const midY = (shoulderY + earY) / 2;
-        const textX = midX + SIDE_ANGLE_TEXT_OFFSET_PX;
-        const textY = midY - SIDE_ANGLE_TEXT_OFFSET_PX/2;
 
         canvasCtx.font = `900 ${SIDE_ANGLE_TEXT_FONT_SIZE}px Roboto, sans-serif`;
         canvasCtx.lineWidth = 15;
@@ -914,9 +912,9 @@ function App() {
         } else if (Math.abs(nextDisplayAngle - displayedSideAngleRef.current) >= SIDE_ANGLE_DISPLAY_STEP_DEGREES) {
           displayedSideAngleRef.current = nextDisplayAngle;
         }
-        canvasCtx.strokeText(`${displayedSideAngleRef.current}°`, textX, textY);
+        canvasCtx.strokeText(`${displayedSideAngleRef.current}°`, midX + SIDE_ANGLE_TEXT_OFFSET_PX, midY - SIDE_ANGLE_TEXT_OFFSET_PX/2);
         canvasCtx.fillStyle = ANGLE_TEXT_COLOR;
-        canvasCtx.fillText(`${displayedSideAngleRef.current}°`, textX, textY);
+        canvasCtx.fillText(`${displayedSideAngleRef.current}°`, midX + SIDE_ANGLE_TEXT_OFFSET_PX, midY - SIDE_ANGLE_TEXT_OFFSET_PX/2);
       } else {
         smoothedSideAngleRef.current = null;
         displayedSideAngleRef.current = null;
