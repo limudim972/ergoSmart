@@ -900,8 +900,6 @@ function App() {
         sideAngleDeviation = smoothedSideAngle;
         const midX = (shoulderX + earX) / 2;
         const midY = (shoulderY + earY) / 2;
-        const normalX = -(earY - shoulderY) / lineLength;
-        const normalY = (earX - shoulderX) / lineLength;
         const textX = midX + SIDE_ANGLE_TEXT_OFFSET_PX;
         const textY = midY - SIDE_ANGLE_TEXT_OFFSET_PX/2;
 
