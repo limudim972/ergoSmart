@@ -145,10 +145,11 @@ function App() {
   const WRIST_DEADZONE_PX = 9;
   const WRIST_SOFT_ZONE_PX = 20;
   const WRIST_SOFT_ALPHA = 0.06;
-  const EAR_POINT_RADIUS = 30;
-  const ARM_POINT_RADIUS = 30;
-  const ELBOW_POINT_RADIUS = 24;
-  const WRIST_POINT_RADIUS = 20;
+  const POINT_RADIUS = 6;
+  const EAR_POINT_RADIUS = POINT_RADIUS;
+  const ARM_POINT_RADIUS = POINT_RADIUS;
+  const ELBOW_POINT_RADIUS = POINT_RADIUS;
+  const WRIST_POINT_RADIUS = POINT_RADIUS;
   const LANDMARK_COLORS = {
     ear: '#ffd166',
     shoulder: '#7bffb2',
@@ -158,10 +159,11 @@ function App() {
   const ANGLE_LINE_COLOR = '#f8f9fa';
   const ARM_LINE_COLOR = '#a8dadc';
   const ANGLE_TEXT_COLOR = '#f8f9fa';
-  const SIDE_ANGLE_LINE_WIDTH = 20;
-  const ARM_LINE_WIDTH = 10;
-  const SIDE_ANGLE_TEXT_FONT_SIZE = 60;
-  const SIDE_ANGLE_TEXT_OFFSET_PX = 130;
+  const LINE_WIDTH = 6;
+  const SIDE_ANGLE_LINE_WIDTH = LINE_WIDTH;
+  const ARM_LINE_WIDTH = LINE_WIDTH;
+  const SIDE_ANGLE_TEXT_FONT_SIZE = 20;
+  const SIDE_ANGLE_TEXT_OFFSET_PX = 40;
   const SIDE_ANGLE_SMOOTHING_ALPHA = 0.15;
   const SIDE_ANGLE_DISPLAY_STEP_DEGREES = 2;
   const ELBOW_ANGLE_SMOOTHING_ALPHA = 0.2;
@@ -883,16 +885,25 @@ function App() {
 
         const dx = earX - shoulderX;
         const dy = shoulderY - earY;
+        const lineLength = Math.hypot(dx, earY - shoulderY) || 1;
+        drawLine(
+          canvasCtx,
+          shoulderX,
+          shoulderY,
+          shoulderX,
+          shoulderY - lineLength,
+          'rgba(248, 249, 250, 0.45)',
+          SIDE_ANGLE_LINE_WIDTH
+        );
         const verticalDeviationAngle = Math.atan2(Math.abs(dx), Math.max(Math.abs(dy), 0.0001)) * (180 / Math.PI);
         const smoothedSideAngle = smoothAngleValue(verticalDeviationAngle, smoothedSideAngleRef, SIDE_ANGLE_SMOOTHING_ALPHA);
         sideAngleDeviation = smoothedSideAngle;
         const midX = (shoulderX + earX) / 2;
         const midY = (shoulderY + earY) / 2;
-        const lineLength = Math.hypot(dx, earY - shoulderY) || 1;
         const normalX = -(earY - shoulderY) / lineLength;
         const normalY = (earX - shoulderX) / lineLength;
-        const textX = midX + (normalX * SIDE_ANGLE_TEXT_OFFSET_PX);
-        const textY = midY + (normalY * SIDE_ANGLE_TEXT_OFFSET_PX);
+        const textX = midX + SIDE_ANGLE_TEXT_OFFSET_PX;
+        const textY = midY - SIDE_ANGLE_TEXT_OFFSET_PX/2;
 
         canvasCtx.font = `900 ${SIDE_ANGLE_TEXT_FONT_SIZE}px Roboto, sans-serif`;
         canvasCtx.lineWidth = 15;
@@ -1023,7 +1034,7 @@ function App() {
         rightShoulder.x * canvasElement.width,
         rightShoulder.y * canvasElement.height,
         shoulderColor,
-        4
+        LINE_WIDTH
       );
 
       const midShoulder = {
@@ -1046,7 +1057,7 @@ function App() {
         midHip.x * canvasElement.width,
         midHip.y * canvasElement.height,
         backColor,
-        4
+        LINE_WIDTH
       );
       drawLine(
         canvasCtx,
@@ -1055,7 +1066,7 @@ function App() {
         midKnee.x * canvasElement.width,
         midKnee.y * canvasElement.height,
         backColor,
-        4
+        LINE_WIDTH
       );
 
       const nose = landmarks[0];
