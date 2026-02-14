@@ -96,6 +96,7 @@ function App() {
   const [viewMode, setViewMode] = useState(initialUiSettings.viewMode);
   const [sideConfidence, setSideConfidence] = useState({
     side: 'left',
+    nose: null,
     ear: null,
     shoulder: null
   });
@@ -103,6 +104,8 @@ function App() {
   const [liveSideAngle, setLiveSideAngle] = useState(null);
   const [beepSnapshots, setBeepSnapshots] = useState([]);
   const [selectedSnapshot, setSelectedSnapshot] = useState(null);
+  const [availableCameras, setAvailableCameras] = useState([]);
+  const [selectedCameraId, setSelectedCameraId] = useState('');
   const [, setStartupStatus] = useState({
     progress: 10,
     stageText: 'טוען מודל...',
@@ -145,12 +148,15 @@ function App() {
   const WRIST_DEADZONE_PX = 9;
   const WRIST_SOFT_ZONE_PX = 20;
   const WRIST_SOFT_ALPHA = 0.06;
+  const NOSE_MIN_VISIBILITY = 0.35;
   const POINT_RADIUS = 6;
   const EAR_POINT_RADIUS = POINT_RADIUS;
+  const NOSE_POINT_RADIUS = POINT_RADIUS;
   const ARM_POINT_RADIUS = POINT_RADIUS;
   const ELBOW_POINT_RADIUS = POINT_RADIUS;
   const WRIST_POINT_RADIUS = POINT_RADIUS;
   const LANDMARK_COLORS = {
+    nose: '#ff6b6b',
     ear: '#ffd166',
     shoulder: '#7bffb2',
     elbow: '#8ecae6',
@@ -164,6 +170,9 @@ function App() {
   const ARM_LINE_WIDTH = LINE_WIDTH;
   const SIDE_ANGLE_TEXT_FONT_SIZE = 20;
   const SIDE_ANGLE_TEXT_OFFSET_PX = 40;
+  const NOSE_ANGLE_TEXT_FONT_SIZE = 18;
+  const NOSE_ANGLE_TEXT_OFFSET_PX = 34;
+  const NOSE_LINE_COLOR = '#ff8fab';
   const SIDE_ANGLE_SMOOTHING_ALPHA = 0.15;
   const SIDE_ANGLE_DISPLAY_STEP_DEGREES = 2;
   const ELBOW_ANGLE_SMOOTHING_ALPHA = 0.2;
@@ -176,6 +185,7 @@ function App() {
   const POINT_DRAG_HIT_RADIUS_PX = 20;
   const SIDE_POINT_OFFSETS_STORAGE_KEY = 'ergoSmart.sidePointOffsets';
   const DEFAULT_SIDE_POINT_OFFSETS = {
+    nose: { x: 0, y: 0 },
     ear: { x: 0, y: 0 },
     shoulder: { x: 0, y: 0 },
     elbow: { x: 0, y: 0 },
@@ -188,6 +198,7 @@ function App() {
   soundConfigRef.current = soundConfig;
   const sidePointOffsetsRef = useRef(loadSidePointOffsets());
   const latestRawSidePointsRef = useRef({
+    nose: null,
     ear: null,
     shoulder: null,
     elbow: null,
@@ -253,6 +264,12 @@ function App() {
   function getVisibilityValue(landmark) {
     if (!landmark || typeof landmark.visibility !== 'number') return null;
     return landmark.visibility;
+  }
+
+  function isNoseVisible(landmark) {
+    if (!landmark) return false;
+    if (typeof landmark.visibility !== 'number') return true;
+    return landmark.visibility >= NOSE_MIN_VISIBILITY;
   }
 
   function chooseTrackedSide(landmarks) {
@@ -383,6 +400,8 @@ function App() {
   }
 
   function normalizeSidePointOffsets(offsets) {
+    const noseX = Number(offsets?.nose?.x);
+    const noseY = Number(offsets?.nose?.y);
     const earX = Number(offsets?.ear?.x);
     const earY = Number(offsets?.ear?.y);
     const shoulderX = Number(offsets?.shoulder?.x);
@@ -393,6 +412,10 @@ function App() {
     const wristY = Number(offsets?.wrist?.y);
 
     return {
+      nose: {
+        x: Number.isFinite(noseX) ? clamp(noseX, -POINT_OFFSET_LIMIT, POINT_OFFSET_LIMIT) : 0,
+        y: Number.isFinite(noseY) ? clamp(noseY, -POINT_OFFSET_LIMIT, POINT_OFFSET_LIMIT) : 0
+      },
       ear: {
         x: Number.isFinite(earX) ? clamp(earX, -POINT_OFFSET_LIMIT, POINT_OFFSET_LIMIT) : 0,
         y: Number.isFinite(earY) ? clamp(earY, -POINT_OFFSET_LIMIT, POINT_OFFSET_LIMIT) : 0
@@ -523,6 +546,25 @@ function App() {
       window.localStorage.setItem(SIDE_POINT_OFFSETS_STORAGE_KEY, JSON.stringify(offsets));
     } catch (error) {
       // Ignore storage errors; app should keep working with in-memory values.
+    }
+  }
+
+  async function refreshCameraDevices() {
+    if (!navigator?.mediaDevices?.enumerateDevices) {
+      return;
+    }
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoInputs = devices.filter((device) => device.kind === 'videoinput');
+      setAvailableCameras(videoInputs);
+      setSelectedCameraId((prev) => {
+        if (prev && videoInputs.some((device) => device.deviceId === prev)) {
+          return prev;
+        }
+        return videoInputs[0]?.deviceId || '';
+      });
+    } catch (error) {
+      console.error('[Camera] Failed to enumerate devices:', error);
     }
   }
 
@@ -697,6 +739,7 @@ function App() {
       displayedSideAngleRef.current = null;
       setSideConfidence({
         side: trackedSideRef.current,
+        nose: null,
         ear: null,
         shoulder: null
       });
@@ -800,15 +843,18 @@ function App() {
       const indices = SIDE_LANDMARKS[side];
       const shoulder = landmarks[indices.shoulder];
       const stableShoulder = getStableShoulderPoint(shoulder, canvasElement.width, canvasElement.height);
+      const nose = landmarks[0];
       const rawEar = landmarks[indices.ear];
       const elbow = getStableElbowPoint(landmarks[indices.elbow], canvasElement.width, canvasElement.height);
       const wrist = getStableWristPoint(landmarks[indices.wrist], canvasElement.width, canvasElement.height);
       latestRawSidePointsRef.current = {
+        nose,
         ear: rawEar,
         shoulder: stableShoulder,
         elbow,
         wrist
       };
+      const adjustedNose = applyPointOffset(nose, sidePointOffsetsRef.current.nose);
       const ear = applyPointOffset(rawEar, sidePointOffsetsRef.current.ear);
       const adjustedShoulder = applyPointOffset(stableShoulder, sidePointOffsetsRef.current.shoulder);
       const adjustedElbow = applyPointOffset(elbow, sidePointOffsetsRef.current.elbow);
@@ -816,6 +862,7 @@ function App() {
 
       setSideConfidence({
         side,
+        nose: getVisibilityValue(adjustedNose),
         ear: getVisibilityValue(ear),
         shoulder: getVisibilityValue(shoulder)
       });
@@ -920,6 +967,34 @@ function App() {
         displayedSideAngleRef.current = null;
       }
 
+      if (isVisible(ear) && isNoseVisible(adjustedNose)) {
+        const earX = ear.x * canvasElement.width;
+        const earY = ear.y * canvasElement.height;
+        const noseX = adjustedNose.x * canvasElement.width;
+        const noseY = adjustedNose.y * canvasElement.height;
+        drawLine(canvasCtx, earX, earY, noseX, noseY, NOSE_LINE_COLOR, SIDE_ANGLE_LINE_WIDTH);
+
+        const dx = noseX - earX;
+        const dy = noseY - earY;
+        const earToNoseAngle = Math.atan2(Math.abs(dy), Math.max(Math.abs(dx), 0.0001)) * (180 / Math.PI);
+        const midX = (earX + noseX) / 2;
+        const midY = (earY + noseY) / 2;
+        const lineLength = Math.hypot(dx, dy) || 1;
+        const normalX = -dy / lineLength;
+        const normalY = dx / lineLength;
+        const labelX = midX + (normalX * NOSE_ANGLE_TEXT_OFFSET_PX);
+        const labelY = midY + (normalY * NOSE_ANGLE_TEXT_OFFSET_PX);
+
+        canvasCtx.font = `900 ${NOSE_ANGLE_TEXT_FONT_SIZE}px Roboto, sans-serif`;
+        canvasCtx.lineWidth = 12;
+        canvasCtx.strokeStyle = 'rgba(0, 0, 0, 0.5)';
+        canvasCtx.textAlign = 'center';
+        canvasCtx.textBaseline = 'middle';
+        canvasCtx.strokeText(`${Math.round(earToNoseAngle)}°`, labelX, labelY);
+        canvasCtx.fillStyle = LANDMARK_COLORS.nose;
+        canvasCtx.fillText(`${Math.round(earToNoseAngle)}°`, labelX, labelY);
+      }
+
       if (adjustedShoulder) {
         drawCircle(
           canvasCtx,
@@ -931,6 +1006,9 @@ function App() {
       }
       if (isVisible(ear)) {
         drawCircle(canvasCtx, ear.x * canvasElement.width, ear.y * canvasElement.height, EAR_POINT_RADIUS, LANDMARK_COLORS.ear);
+      }
+      if (isNoseVisible(adjustedNose)) {
+        drawCircle(canvasCtx, adjustedNose.x * canvasElement.width, adjustedNose.y * canvasElement.height, NOSE_POINT_RADIUS, LANDMARK_COLORS.nose);
       }
       if (isVisible(adjustedElbow)) {
         drawCircle(
@@ -1088,6 +1166,22 @@ function App() {
       changeStyleProperty('--posture-status',"'טוב'");
     }
   }
+
+  useEffect(() => {
+    refreshCameraDevices();
+
+    if (!navigator?.mediaDevices || typeof navigator.mediaDevices.addEventListener !== 'function') {
+      return undefined;
+    }
+
+    const handleDeviceChange = () => {
+      refreshCameraDevices();
+    };
+    navigator.mediaDevices.addEventListener('devicechange', handleDeviceChange);
+    return () => {
+      navigator.mediaDevices.removeEventListener('devicechange', handleDeviceChange);
+    };
+  }, []);
 
   /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(()=>{
@@ -1265,7 +1359,7 @@ function App() {
         startupRetryTimerRef.current = null;
       }
     };
-  }, []);
+  }, [selectedCameraId]);
   /* eslint-enable react-hooks/exhaustive-deps */
 
   const updateDraggedPointByPointer = (clientX, clientY) => {
@@ -1297,14 +1391,17 @@ function App() {
     const pointerX = event.clientX - rect.left;
     const pointerY = event.clientY - rect.top;
 
-    const draggablePoints = ['ear', 'shoulder', 'elbow', 'wrist'];
+    const draggablePoints = ['nose', 'ear', 'shoulder', 'elbow', 'wrist'];
     let nearestPoint = null;
     let nearestDistance = Number.POSITIVE_INFINITY;
 
     draggablePoints.forEach((pointKey) => {
       const rawPoint = latestRawSidePointsRef.current[pointKey];
       const adjustedPoint = applyPointOffset(rawPoint, sidePointOffsetsRef.current[pointKey]);
-      if (!adjustedPoint || !isVisible(adjustedPoint)) return;
+      const pointIsVisible = pointKey === 'nose'
+        ? isNoseVisible(adjustedPoint)
+        : isVisible(adjustedPoint);
+      if (!adjustedPoint || !pointIsVisible) return;
       const pointX = adjustedPoint.x * rect.width;
       const pointY = adjustedPoint.y * rect.height;
       const distance = Math.hypot(pointerX - pointX, pointerY - pointY);
@@ -1349,6 +1446,7 @@ function App() {
     displayedSideAngleRef.current = null;
     setSideConfidence({
       side: trackedSideRef.current,
+      nose: null,
       ear: null,
       shoulder: null
     });
@@ -1368,7 +1466,10 @@ function App() {
       }
     };
   }, []);
-  
+
+  const webcamVideoConstraints = selectedCameraId
+    ? { deviceId: { exact: selectedCameraId } }
+    : undefined;
 
   return (
     <div className="flex flex-col min-h-screen" dir="rtl">
@@ -1386,13 +1487,37 @@ function App() {
             liveSideAngle={liveSideAngle}
           />
           <div className="w-full max-w-lg xl:max-w-xl">
+            <div className="mb-3 rounded-2xl border border-neon-blue border-opacity-30 bg-deep-space bg-opacity-70 p-3">
+              <label htmlFor="camera-select" className="text-xs text-neon-green opacity-90 block mb-2">
+                מצלמה
+              </label>
+              <select
+                id="camera-select"
+                value={selectedCameraId}
+                onChange={(event) => setSelectedCameraId(event.target.value)}
+                className="w-full rounded-lg bg-space-gray text-neon-green border border-neon-blue border-opacity-40 px-3 py-2 text-sm"
+              >
+                {availableCameras.length === 0 ? (
+                  <option value="">לא זוהו מצלמות</option>
+                ) : (
+                  availableCameras.map((camera, index) => (
+                    <option key={camera.deviceId} value={camera.deviceId}>
+                      {camera.label || `Camera ${index + 1}`}
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
             <div className="display relative rounded-3xl overflow-hidden w-full bg-deep-space">
               <div className="absolute inset-0 bg-gradient-to-r from-neon-blue to-neon-green opacity-5 z-10"></div>
               <Webcam
+                key={selectedCameraId || 'default-camera'}
                 ref={webcamRef}
                 className="webcam rounded-3xl w-full opacity-90"
                 width="100%"
                 height="auto"
+                videoConstraints={webcamVideoConstraints}
+                onUserMedia={refreshCameraDevices}
               />
               <canvas
                 ref={canvasRef}

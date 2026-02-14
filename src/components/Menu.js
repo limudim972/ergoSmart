@@ -45,6 +45,7 @@ export function Menu(props) {
       <MenuHeader state={state} viewMode={props.viewMode} />
       <div className="rounded-xl border border-neon-blue border-opacity-30 bg-space-gray bg-opacity-40 p-3 mb-4 text-sm">
         <p className="text-white mb-1">צד במעקב: <span className="text-neon-green uppercase">{confidence.side || "לא זמין"}</span></p>
+        <p className="text-white mb-1">אף: <span className="text-neon-green">{formatConfidence(confidence.nose)}</span></p>
         <p className="text-white mb-1">אוזן: <span className="text-neon-green">{formatConfidence(confidence.ear)}</span></p>
         <p className="text-white mb-2">כתף: <span className="text-neon-green">{formatConfidence(confidence.shoulder)}</span></p>
       </div>
